@@ -229,10 +229,12 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
         vid_writer = cv2.VideoWriter(
             save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (int(width), int(height))
         )
+
+        bbox_output_path = os.path.join(save_folder, "output.json")
     frame_index = 0
-    data = {}
-    data["class_list"] = list(predictor.cls_names)
-    output_path = "Essai3_Tournee3_output.json"
+    bbox_data = {}
+    bbox_data["class_list"] = list(predictor.cls_names)
+
     while True:
         frame_index += 1
         ret_val, frame = cap.read()
@@ -241,18 +243,17 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
             outputs, img_info = predictor.inference(frame)
             result_frame = predictor.visual(outputs[0], img_info, predictor.confthre)
             if outputs is None or outputs[0] is None:
-                data[frame_index] = {}
+                bbox_data[frame_index] = {}
             else:
-                data[frame_index] = {
+                bbox_data[frame_index] = {
                     i: p.detach().cpu().numpy().tolist()
                     for i, p in enumerate(outputs[0])
                 }
-            if frame_index % 1000 == 1:
-
-                with open(output_path, "w") as file:
-                    json.dump(data, file, indent=2)
             if args.save_result:
                 vid_writer.write(result_frame)
+                # if frame_index % 1000 == 1:
+                #     with open(bbox_output_path, "w") as file:
+                #         json.dump(bbox_data, file, indent=2)
             else:
                 cv2.namedWindow("yolox", cv2.WINDOW_NORMAL)
                 cv2.imshow("yolox", result_frame)
@@ -261,9 +262,9 @@ def imageflow_demo(predictor, vis_folder, current_time, args):
                 break
         else:
             break
-
-    with open(output_path, "w") as file:
-        json.dump(data, file, indent=2)
+    if args.save_result:
+        with open(bbox_output_path, "w") as file:
+            json.dump(bbox_data, file, indent=2)
 
 
 def main(exp, args):

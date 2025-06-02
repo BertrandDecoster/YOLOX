@@ -227,3 +227,4 @@ events.out.tfevents*
 ehthumbs.db
 Thumbs.db
 output.json
+*.mp4
