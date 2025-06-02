@@ -127,3 +127,47 @@ Key architectural innovations:
 - **Augmentation**: Strong augmentation pipeline including Mosaic, MixUp, and HSV adjustments
 - **Dynamic Input Size**: Supports training with varying input sizes for better generalization
 - **EMA**: Exponential Moving Average for stable model weights during training
+
+## Finetuning on Custom Data - Key Learnings
+
+### CPU Training on Mac
+YOLOX assumes CUDA availability by default. For CPU training:
+- The trainer calls `torch.cuda.set_device()` which fails on Mac
+- Workaround: Create custom training scripts that bypass the standard trainer
+- Set device to "cpu" explicitly and disable CUDA-specific features
+
+### COCO Dataset Format
+- **Class IDs start from 0** in the categories list, but annotations use 1-based indexing
+- **Class 80 (trashcan)** is at index 79 in COCO_CLASSES array - causes IndexError in visualization
+- Fix: Map class IDs for visualization: `cls_fixed[cls == 80] = 79`
+
+### Model Checkpoint Format
+Standard YOLOX checkpoint structure:
+```python
+checkpoint = {
+    "model": model.state_dict(),
+    "optimizer": optimizer.state_dict(), 
+    "epoch": epoch_num,
+    "loss": final_loss,
+}
+```
+
+### Overfitting Test Strategy
+For verifying the training pipeline:
+1. Train on single image for many iterations (1000+)
+2. Disable all augmentations (mosaic, mixup, flip, etc.)
+3. Use high learning rate (0.001) with no decay
+4. Expected: >90% loss reduction, detections on training image
+
+### Common Issues
+1. **Import errors**: Need to install dependencies: `loguru`, `pycocotools`, `opencv-python`
+2. **Path issues**: Use absolute paths or proper relative paths from YOLOX root
+3. **Memory**: Batch size 1-2 for CPU training to avoid OOM
+4. **Visualization**: `cv2.imshow()` blocks execution - use headless version for batch processing
+
+### Useful File Organization
+Keep finetuning tools separate in `/finetuning/` folder:
+- Training scripts (train_longer.py)
+- Visualization tools (demo_finetune_visual.py)
+- Model checkpoints (.pth files)
+- Documentation (FINETUNING.md, guides)
