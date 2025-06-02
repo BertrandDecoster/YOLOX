@@ -64,7 +64,7 @@ def make_parser():
         "-c", "--ckpt", default=None, type=str, help="checkpoint file"
     )
     parser.add_argument(
-    ` "--resume", default=False, action="store_true", help="resume training"
+        "--resume", default=False, action="store_true", help="resume training"
     )
     parser.add_argument("-e", "--start_epoch", default=None, type=int, help="resume training start epoch")
     
