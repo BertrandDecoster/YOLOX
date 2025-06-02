@@ -77,8 +77,8 @@ def load_data():
 
         h, w = img.shape[:2]
 
-        # Resize image
-        img_resized, _ = preproc(img, img_size)
+        # Resize image - IMPORTANT: get the ratio
+        img_resized, ratio = preproc(img, img_size)
         img_tensor = torch.from_numpy(img_resized).float()
 
         # Get annotations for this image
@@ -90,19 +90,19 @@ def load_data():
         targets = []
         for ann in anns:
             x, y, w_box, h_box = ann["bbox"]
-            # Convert to relative coordinates
-            x_center = (x + w_box / 2) / w
-            y_center = (y + h_box / 2) / h
-            w_rel = w_box / w
-            h_rel = h_box / h
-
-            # Scale to resized image
-            x_center *= img_size[0]
-            y_center *= img_size[1]
-            w_rel *= img_size[0]
-            h_rel *= img_size[1]
-
-            targets.append([ann["category_id"], x_center, y_center, w_rel, h_rel])
+            
+            # FIXED: Apply the same ratio transformation as the image
+            # The image is resized by ratio and placed at top-left
+            x_scaled = x * ratio
+            y_scaled = y * ratio
+            w_scaled = w_box * ratio
+            h_scaled = h_box * ratio
+            
+            # Convert to center format
+            x_center = x_scaled + w_scaled / 2
+            y_center = y_scaled + h_scaled / 2
+            
+            targets.append([ann["category_id"], x_center, y_center, w_scaled, h_scaled])
 
         if targets:  # Only add images with annotations
             targets_tensor = torch.tensor(targets)
@@ -134,8 +134,8 @@ def train():
     img = cv2.imread(img_path)
     h, w = img.shape[:2]
 
-    # Resize image
-    img_resized, _ = preproc(img, img_size)
+    # Resize image - IMPORTANT: get the ratio
+    img_resized, ratio = preproc(img, img_size)
     img_tensor = torch.from_numpy(img_resized).unsqueeze(0).float()
 
     # Get annotations for this image
@@ -147,19 +147,19 @@ def train():
     targets = []
     for ann in anns:
         x, y, w_box, h_box = ann["bbox"]
-        # Convert to relative coordinates
-        x_center = (x + w_box / 2) / w
-        y_center = (y + h_box / 2) / h
-        w_rel = w_box / w
-        h_rel = h_box / h
-
-        # Scale to resized image
-        x_center *= img_size[0]
-        y_center *= img_size[1]
-        w_rel *= img_size[0]
-        h_rel *= img_size[1]
-
-        targets.append([ann["category_id"], x_center, y_center, w_rel, h_rel])
+        
+        # FIXED: Apply the same ratio transformation as the image
+        # The image is resized by ratio and placed at top-left
+        x_scaled = x * ratio
+        y_scaled = y * ratio
+        w_scaled = w_box * ratio
+        h_scaled = h_box * ratio
+        
+        # Convert to center format
+        x_center = x_scaled + w_scaled / 2
+        y_center = y_scaled + h_scaled / 2
+        
+        targets.append([ann["category_id"], x_center, y_center, w_scaled, h_scaled])
 
     targets = torch.tensor(targets).unsqueeze(0) if targets else torch.zeros((1, 0, 5))
 
@@ -169,6 +169,9 @@ def train():
     logger.info(f"Loaded image: {img_path}")
     logger.info(f"Image shape: {img_tensor.shape}")
     logger.info(f"Number of targets: {targets.shape[1]}")
+    logger.info(f"Preprocessing ratio: {ratio}")
+    logger.info(f"Original image size: {w}x{h}")
+    logger.info(f"Scaled image size: {int(w*ratio)}x{int(h*ratio)}")
     logger.info(f"Target classes: {[int(t[0]) for t in targets[0]]}")
 
     # Optimizer with lower learning rate

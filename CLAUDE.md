@@ -171,3 +171,35 @@ Keep finetuning tools separate in `/finetuning/` folder:
 - Visualization tools (demo_finetune_visual.py)
 - Model checkpoints (.pth files)
 - Documentation (FINETUNING.md, guides)
+
+### CRITICAL: Coordinate Transformation for Correct Bounding Boxes
+**IMPORTANT**: When training YOLOX with custom data, you MUST correctly handle coordinate transformations to avoid bounding box offset issues.
+
+The `preproc` function maintains aspect ratio when resizing images:
+- Images are resized by a ratio `r = min(target_size[0]/h, target_size[1]/w)`
+- The resized image is placed at top-left of the target canvas with padding
+
+**Incorrect approach (causes ~70 pixel offset):**
+```python
+# DON'T DO THIS - assumes image is stretched to target size
+x_center *= img_size[0]
+y_center *= img_size[1]
+```
+
+**Correct approach:**
+```python
+# Get preprocessing ratio
+img_resized, ratio = preproc(img, img_size)
+
+# Transform annotations using the same ratio
+x_scaled = x * ratio
+y_scaled = y * ratio
+w_scaled = w * ratio
+h_scaled = h * ratio
+
+# Convert to center format
+x_center = x_scaled + w_scaled / 2
+y_center = y_scaled + h_scaled / 2
+```
+
+This ensures that regardless of input size (416x416, 640x640, etc.), the model learns correct object locations and bounding boxes appear in the right place during inference.
