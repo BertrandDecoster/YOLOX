@@ -228,3 +228,4 @@ ehthumbs.db
 Thumbs.db
 output.json
 *.mp4
+/demo_output
