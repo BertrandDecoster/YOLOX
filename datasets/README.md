@@ -21,4 +21,10 @@ COCO/
     # image files that are mentioned in the corresponding json
 ```
 
+The "2017" naming convention comes from the COCO dataset structure. COCO (Common Objects in
+Context) dataset uses year-based naming for its data splits, with "train2017" and "val2017" being
+the standard directory names for the 2017 version of the COCO dataset.
+
 You can use the 2014 version of the dataset as well.
+
+
