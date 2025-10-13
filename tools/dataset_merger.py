@@ -152,8 +152,25 @@ class COCOMerger:
         """
         stats = {"images": 0, "annotations": 0, "annotations_filtered": 0}
 
-        # Process categories first
-        old_to_new_cat_id = self._process_categories(dataset, dataset_name)
+        # First, identify which categories are actually used in annotations
+        used_cat_ids = set()
+        for ann in dataset.get("annotations", []):
+            used_cat_ids.add(ann.get("category_id"))
+
+        # Filter categories to only include those that are used
+        original_categories = dataset.get("categories", [])
+        used_categories = [cat for cat in original_categories if cat["id"] in used_cat_ids]
+
+        if len(used_categories) < len(original_categories):
+            unused_cats = [cat for cat in original_categories if cat["id"] not in used_cat_ids]
+            print(f"  Filtering out {len(unused_cats)} unused categories:")
+            for cat in unused_cats:
+                print(f"    - Category {cat['id']}: '{cat['name']}' (0 annotations)")
+
+        # Process only the used categories
+        old_to_new_cat_id = self._process_categories_filtered(
+            used_categories, dataset_name
+        )
 
         # Process images
         old_to_new_img_id = {}
@@ -270,6 +287,63 @@ class COCOMerger:
         old_to_new = {}
 
         for cat in dataset.get("categories", []):
+            old_cat_id = cat["id"]
+            cat_name = cat["name"]
+
+            if self.merge_categories:
+                # Merge categories with same name
+                if cat_name in self.merged_categories:
+                    # Category already exists
+                    new_cat_id = self.merged_categories[cat_name]["id"]
+                else:
+                    # New category
+                    new_cat_id = self.next_cat_id
+                    self.next_cat_id += 1
+
+                    self.merged_categories[cat_name] = {
+                        "id": new_cat_id,
+                        "name": cat_name,
+                        "supercategory": cat.get("supercategory", "object"),
+                    }
+            else:
+                # Keep categories separate (add dataset prefix)
+                prefixed_name = f"{dataset_name}_{cat_name}"
+
+                if prefixed_name in self.merged_categories:
+                    new_cat_id = self.merged_categories[prefixed_name]["id"]
+                else:
+                    new_cat_id = self.next_cat_id
+                    self.next_cat_id += 1
+
+                    self.merged_categories[prefixed_name] = {
+                        "id": new_cat_id,
+                        "name": prefixed_name,
+                        "supercategory": cat.get("supercategory", "object"),
+                    }
+
+            old_to_new[old_cat_id] = new_cat_id
+            self.category_map[(dataset_name, old_cat_id)] = new_cat_id
+
+        return old_to_new
+
+    def _process_categories_filtered(
+        self,
+        categories: List[Dict],
+        dataset_name: str,
+    ) -> Dict[int, int]:
+        """
+        Process a filtered list of categories and create mapping from old to new IDs.
+
+        Args:
+            categories: List of category dicts to process (already filtered)
+            dataset_name: Name of the dataset
+
+        Returns:
+            Mapping from old category IDs to new category IDs
+        """
+        old_to_new = {}
+
+        for cat in categories:
             old_cat_id = cat["id"]
             cat_name = cat["name"]
 

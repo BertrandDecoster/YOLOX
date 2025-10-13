@@ -97,11 +97,24 @@ def make_parser():
         help="Evaluating on test-dev set.",
     )
     parser.add_argument(
+        "--train",
+        dest="train",
+        default=False,
+        action="store_true",
+        help="Evaluating on training set.",
+    )
+    parser.add_argument(
         "--speed",
         dest="speed",
         default=False,
         action="store_true",
         help="speed test only.",
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        type=str,
+        help="device for evaluation: 'cpu' or 'cuda' (auto-detected if not specified)",
     )
     parser.add_argument(
         "opts",
@@ -145,16 +158,43 @@ def main(exp, args, num_gpu):
     if args.tsize is not None:
         exp.test_size = (args.tsize, args.tsize)
 
+    # Determine device (CPU or CUDA only - MPS disabled)
+    use_cuda = False
+
+    if args.device is not None:
+        # User-specified device
+        device_str = args.device.lower()
+        if device_str == "cuda" and torch.cuda.is_available():
+            use_cuda = True
+        elif device_str != "cpu":
+            logger.warning(f"Requested device '{args.device}' not available, falling back to CPU")
+    else:
+        # Auto-detect: CUDA > CPU
+        if torch.cuda.is_available() and num_gpu > 0:
+            use_cuda = True
+
+    if use_cuda:
+        device = "cuda:{}".format(rank)
+        logger.info(f"Using CUDA device: {device}")
+    else:
+        device = "cpu"
+        rank = 0
+        logger.info("Using CPU for evaluation")
+
     model = exp.get_model()
     logger.info("Model Summary: {}".format(get_model_info(model, exp.test_size)))
     logger.info("Model Structure:\n{}".format(str(model)))
 
-    evaluator = exp.get_evaluator(args.batch_size, is_distributed, args.test, args.legacy)
+    evaluator = exp.get_evaluator(args.batch_size, is_distributed, args.test, args.legacy, args.train)
     evaluator.per_class_AP = True
     evaluator.per_class_AR = True
 
-    torch.cuda.set_device(rank)
-    model.cuda(rank)
+    # Move model to appropriate device
+    if use_cuda:
+        torch.cuda.set_device(rank)
+        model = model.cuda(rank)
+    else:
+        model = model.cpu()
     model.eval()
 
     if not args.speed and not args.trt:
@@ -163,13 +203,17 @@ def main(exp, args, num_gpu):
         else:
             ckpt_file = args.ckpt
         logger.info("loading checkpoint from {}".format(ckpt_file))
-        loc = "cuda:{}".format(rank)
+        # Use detected device for checkpoint loading
+        loc = device
         ckpt = torch.load(ckpt_file, map_location=loc)
         model.load_state_dict(ckpt["model"])
         logger.info("loaded checkpoint done.")
 
     if is_distributed:
-        model = DDP(model, device_ids=[rank])
+        if use_cuda:
+            model = DDP(model, device_ids=[rank])
+        else:
+            logger.warning("Distributed evaluation not supported on CPU, using single process")
 
     if args.fuse:
         logger.info("\tFusing model...")
@@ -205,8 +249,16 @@ if __name__ == "__main__":
     if not args.experiment_name:
         args.experiment_name = exp.exp_name
 
-    num_gpu = torch.cuda.device_count() if args.devices is None else args.devices
-    assert num_gpu <= torch.cuda.device_count()
+    if args.devices is not None:
+        num_gpu = args.devices
+    elif torch.cuda.is_available():
+        num_gpu = torch.cuda.device_count()
+    else:
+        num_gpu = 0  # CPU mode
+        logger.info("CUDA not available, using CPU for evaluation")
+
+    if num_gpu > 0:
+        assert num_gpu <= torch.cuda.device_count()
 
     dist_url = "auto" if args.dist_url is None else args.dist_url
     launch(

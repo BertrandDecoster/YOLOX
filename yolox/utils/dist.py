@@ -291,4 +291,6 @@ def time_synchronized():
     """pytorch-accurate time"""
     if torch.cuda.is_available():
         torch.cuda.synchronize()
+    # Note: MPS doesn't have an explicit synchronize() method
+    # Operations are already synchronized when called from Python
     return time.time()

@@ -120,6 +120,12 @@ def parse_args():
         action="store_true",
         help="Skip image validation (faster but may include corrupted images)"
     )
+    parser.add_argument(
+        "--max-images",
+        type=int,
+        default=None,
+        help="Limit dataset to N images (randomly sampled). Useful for quick overfit tests."
+    )
 
     # Other
     parser.add_argument(
@@ -257,6 +263,7 @@ def main():
         use_weighted_split=not args.use_uniform_split,
         copy_images=not args.symlink_images,
         validate_images=not args.skip_validation,
+        max_images=args.max_images,
     )
 
     stats = processor.process()

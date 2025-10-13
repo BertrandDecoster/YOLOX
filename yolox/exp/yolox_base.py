@@ -222,7 +222,11 @@ class Exp(BaseExp):
         return train_loader
 
     def random_resize(self, data_loader, epoch, rank, is_distributed):
-        tensor = torch.LongTensor(2).cuda()
+        # Create tensor on appropriate device (CUDA or CPU only)
+        if torch.cuda.is_available():
+            tensor = torch.LongTensor(2).cuda()
+        else:
+            tensor = torch.LongTensor(2)
 
         if rank == 0:
             size_factor = self.input_size[1] * 1.0 / self.input_size[0]
@@ -299,12 +303,24 @@ class Exp(BaseExp):
     def get_eval_dataset(self, **kwargs):
         from yolox.data import COCODataset, ValTransform
         testdev = kwargs.get("testdev", False)
+        trainset = kwargs.get("trainset", False)
         legacy = kwargs.get("legacy", False)
+
+        # Priority: trainset > testdev > val
+        if trainset:
+            json_file = self.train_ann
+            name = "train2017"
+        elif testdev:
+            json_file = self.test_ann
+            name = "test2017"
+        else:
+            json_file = self.val_ann
+            name = "val2017"
 
         return COCODataset(
             data_dir=self.data_dir,
-            json_file=self.val_ann if not testdev else self.test_ann,
-            name="val2017" if not testdev else "test2017",
+            json_file=json_file,
+            name=name,
             img_size=self.test_size,
             preproc=ValTransform(legacy=legacy),
         )
@@ -320,9 +336,12 @@ class Exp(BaseExp):
         else:
             sampler = torch.utils.data.SequentialSampler(valdataset)
 
+        # pin_memory only works with CUDA
+        use_pin_memory = torch.cuda.is_available()
+
         dataloader_kwargs = {
             "num_workers": self.data_num_workers,
-            "pin_memory": True,
+            "pin_memory": use_pin_memory,
             "sampler": sampler,
         }
         dataloader_kwargs["batch_size"] = batch_size
@@ -330,12 +349,12 @@ class Exp(BaseExp):
 
         return val_loader
 
-    def get_evaluator(self, batch_size, is_distributed, testdev=False, legacy=False):
+    def get_evaluator(self, batch_size, is_distributed, testdev=False, legacy=False, trainset=False):
         from yolox.evaluators import COCOEvaluator
 
         return COCOEvaluator(
             dataloader=self.get_eval_loader(batch_size, is_distributed,
-                                            testdev=testdev, legacy=legacy),
+                                            testdev=testdev, legacy=legacy, trainset=trainset),
             img_size=self.test_size,
             confthre=self.test_conf,
             nmsthre=self.nmsthre,

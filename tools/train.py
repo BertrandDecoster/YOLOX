@@ -2,6 +2,10 @@
 # -*- coding:utf-8 -*-
 # Copyright (c) Megvii, Inc. and its affiliates.
 
+import os
+# Disable MPS (Metal Performance Shaders) to force CPU usage
+os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '0'
+
 import argparse
 import random
 import warnings
@@ -99,6 +103,10 @@ def make_parser():
 
 @logger.catch
 def main(exp: Exp, args):
+    # Disable MPS (Metal Performance Shaders) to force CPU usage
+    if torch.backends.mps.is_available():
+        torch.backends.mps.is_built = lambda: False
+
     if exp.seed is not None:
         random.seed(exp.seed)
         torch.manual_seed(exp.seed)

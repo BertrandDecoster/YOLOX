@@ -53,6 +53,7 @@ class DatasetProcessor:
         use_weighted_split: bool = True,
         copy_images: bool = True,
         validate_images: bool = True,
+        max_images: Optional[int] = None,
     ):
         """
         Initialize dataset processor.
@@ -70,6 +71,7 @@ class DatasetProcessor:
             use_weighted_split: Use weighted splitting algorithm
             copy_images: If True, copy images. If False, create symlinks.
             validate_images: Validate images before processing
+            max_images: Maximum number of images to process (randomly sampled). None = process all.
         """
         self.input_json = input_json
         self.input_img_dir = input_img_dir
@@ -83,6 +85,7 @@ class DatasetProcessor:
         self.use_weighted_split = use_weighted_split
         self.copy_images = copy_images
         self.validate_images = validate_images
+        self.max_images = max_images
         self.dataset_img_dirs = {}  # Will be populated from JSON if available
 
         # Create output directories
@@ -125,6 +128,17 @@ class DatasetProcessor:
         dataset = load_coco_json(self.input_json)
         print(f"Loaded {len(dataset['images'])} images, "
               f"{len(dataset['annotations'])} annotations")
+
+        # Filter out unused categories
+        print("Filtering categories...")
+        dataset = self._filter_unused_categories(dataset)
+
+        # Limit dataset size if requested
+        if self.max_images is not None and len(dataset['images']) > self.max_images:
+            print(f"Limiting dataset to {self.max_images} images (randomly sampled)...")
+            dataset = self._sample_dataset(dataset, self.max_images)
+            print(f"Sampled {len(dataset['images'])} images, "
+                  f"{len(dataset['annotations'])} annotations")
 
         # Load dataset image directories if available (from merger)
         if "dataset_img_dirs" in dataset:
@@ -230,6 +244,83 @@ class DatasetProcessor:
             file_to_split[f] = "test"
 
         return file_to_split
+
+    def _sample_dataset(self, dataset: Dict, max_images: int) -> Dict:
+        """
+        Randomly sample a subset of images from the dataset.
+
+        Args:
+            dataset: COCO dataset
+            max_images: Maximum number of images to keep
+
+        Returns:
+            Sampled COCO dataset
+        """
+        import random
+        random.seed(self.seed)
+
+        # Get all image IDs
+        all_images = dataset["images"]
+        if len(all_images) <= max_images:
+            return dataset
+
+        # Randomly sample images
+        sampled_images = random.sample(all_images, max_images)
+        sampled_img_ids = {img["id"] for img in sampled_images}
+
+        # Filter annotations to only include those for sampled images
+        sampled_annotations = [
+            ann for ann in dataset["annotations"]
+            if ann["image_id"] in sampled_img_ids
+        ]
+
+        # Create new dataset with sampled data
+        sampled_dataset = {
+            "images": sampled_images,
+            "annotations": sampled_annotations,
+            "categories": dataset.get("categories", []),
+        }
+
+        # Preserve metadata
+        if "info" in dataset:
+            sampled_dataset["info"] = dataset["info"]
+        if "licenses" in dataset:
+            sampled_dataset["licenses"] = dataset["licenses"]
+        if "dataset_img_dirs" in dataset:
+            sampled_dataset["dataset_img_dirs"] = dataset["dataset_img_dirs"]
+
+        return sampled_dataset
+
+    def _filter_unused_categories(self, dataset: Dict) -> Dict:
+        """
+        Filter out categories that have no annotations.
+
+        Args:
+            dataset: COCO dataset
+
+        Returns:
+            Dataset with only used categories
+        """
+        # Find which categories are actually used
+        used_cat_ids = set()
+        for ann in dataset.get("annotations", []):
+            used_cat_ids.add(ann.get("category_id"))
+
+        # Filter categories
+        original_categories = dataset.get("categories", [])
+        used_categories = [cat for cat in original_categories if cat["id"] in used_cat_ids]
+
+        if len(used_categories) < len(original_categories):
+            unused_cats = [cat for cat in original_categories if cat["id"] not in used_cat_ids]
+            print(f"  Filtering out {len(unused_cats)} unused categories:")
+            for cat in unused_cats:
+                print(f"    - Category {cat['id']}: '{cat['name']}' (0 annotations)")
+
+        # Update dataset
+        dataset["categories"] = used_categories
+        print(f"  Kept {len(used_categories)} used categories")
+
+        return dataset
 
     def _process_split(
         self,

@@ -132,9 +132,20 @@ class COCOEvaluator:
             summary (sr): summary info of evaluation.
         """
         # TODO half to amp_test
-        tensor_type = torch.cuda.HalfTensor if half else torch.cuda.FloatTensor
+        # Detect which device the model is on
+        model_device = next(model.parameters()).device
+
+        # Select tensor type based on model device (CUDA or CPU only)
+        use_half = half and model_device.type == "cuda"
+
+        if model_device.type == "cuda":
+            tensor_type = torch.cuda.HalfTensor if use_half else torch.cuda.FloatTensor
+        else:
+            # CPU - use standard tensors
+            tensor_type = torch.HalfTensor if use_half else torch.FloatTensor
+
         model = model.eval()
-        if half:
+        if use_half:
             model = model.half()
         ids = []
         data_list = []
@@ -186,7 +197,16 @@ class COCOEvaluator:
             data_list.extend(data_list_elem)
             output_data.update(image_wise_data)
 
-        statistics = torch.cuda.FloatTensor([inference_time, nms_time, n_samples])
+            # Debug logging for predictions
+            if cur_iter == 0 and is_main_process():
+                num_predictions = sum(1 for out in outputs if out is not None)
+                logger.info(f"Batch 0: {num_predictions}/{len(outputs)} images have predictions, {len(data_list_elem)} valid detections after filtering")
+
+        # Create statistics tensor on appropriate device (CUDA or CPU only)
+        if torch.cuda.is_available():
+            statistics = torch.cuda.FloatTensor([inference_time, nms_time, n_samples])
+        else:
+            statistics = torch.FloatTensor([inference_time, nms_time, n_samples])
         if distributed:
             # different process/device might have different speed,
             # to make sure the process will not be stucked, sync func is used here.
@@ -196,6 +216,9 @@ class COCOEvaluator:
             data_list = list(itertools.chain(*data_list))
             output_data = dict(ChainMap(*output_data))
             torch.distributed.reduce(statistics, dst=0)
+
+        if is_main_process():
+            logger.info(f"Total predictions before COCO eval: {len(data_list)}")
 
         eval_results = self.evaluate_prediction(data_list, statistics)
         synchronize()
@@ -238,12 +261,31 @@ class COCOEvaluator:
             bboxes = xyxy2xywh(bboxes)
 
             for ind in range(bboxes.shape[0]):
+                bbox = bboxes[ind].numpy()
+                score = scores[ind].numpy().item()
+
+                # Skip invalid predictions (NaN, Inf, or unreasonably large values)
+                if not (np.isfinite(bbox).all() and np.isfinite(score)):
+                    continue
+                if (np.abs(bbox) > 1e6).any() or abs(score) > 1e6:
+                    continue
+                if (bbox[2:] <= 0).any():  # Skip zero or negative width/height
+                    continue
+                # Skip bboxes with negative coordinates or unreasonable dimensions
+                # COCO format is [x, y, width, height], all should be >= 0
+                if (bbox < 0).any():
+                    continue
+                # Skip bboxes that are unreasonably large (>10x image size)
+                max_reasonable_size = max(self.img_size) * 10
+                if (bbox[:2] > max_reasonable_size).any() or (bbox[2:] > max_reasonable_size).any():
+                    continue
+
                 label = self.dataloader.dataset.class_ids[int(cls[ind])]
                 pred_data = {
                     "image_id": int(img_id),
                     "category_id": label,
-                    "bbox": bboxes[ind].numpy().tolist(),
-                    "score": scores[ind].numpy().item(),
+                    "bbox": bbox.tolist(),
+                    "score": score,
                     "segmentation": [],
                 }  # COCO json format
                 data_list.append(pred_data)
@@ -281,37 +323,85 @@ class COCOEvaluator:
 
         # Evaluate the Dt (detection) json comparing with the ground truth
         if len(data_dict) > 0:
-            cocoGt = self.dataloader.dataset.coco
-            # TODO: since pycocotools can't process dict in py36, write data to json file.
-            if self.testdev:
-                json.dump(data_dict, open("./yolox_testdev_2017.json", "w"))
-                cocoDt = cocoGt.loadRes("./yolox_testdev_2017.json")
-            else:
-                _, tmp = tempfile.mkstemp()
-                json.dump(data_dict, open(tmp, "w"))
-                cocoDt = cocoGt.loadRes(tmp)
             try:
-                from yolox.layers import COCOeval_opt as COCOeval
-            except ImportError:
-                from pycocotools.cocoeval import COCOeval
+                logger.info(f"Loading ground truth COCO dataset...")
+                cocoGt = self.dataloader.dataset.coco
 
-                logger.warning("Use standard COCOeval.")
+                # Fix missing 'info' and 'licenses' keys in dataset (required by pycocotools)
+                if 'info' not in cocoGt.dataset:
+                    cocoGt.dataset['info'] = {
+                        'description': 'YOLOX evaluation',
+                        'version': '1.0',
+                        'year': 2024,
+                        'contributor': '',
+                        'date_created': ''
+                    }
+                if 'licenses' not in cocoGt.dataset:
+                    cocoGt.dataset['licenses'] = []
 
-            cocoEval = COCOeval(cocoGt, cocoDt, annType[1])
-            cocoEval.evaluate()
-            cocoEval.accumulate()
-            redirect_string = io.StringIO()
-            with contextlib.redirect_stdout(redirect_string):
-                cocoEval.summarize()
-            info += redirect_string.getvalue()
-            cat_ids = list(cocoGt.cats.keys())
-            cat_names = [cocoGt.cats[catId]['name'] for catId in sorted(cat_ids)]
-            if self.per_class_AP:
-                AP_table = per_class_AP_table(cocoEval, class_names=cat_names)
-                info += "per class AP:\n" + AP_table + "\n"
-            if self.per_class_AR:
-                AR_table = per_class_AR_table(cocoEval, class_names=cat_names)
-                info += "per class AR:\n" + AR_table + "\n"
-            return cocoEval.stats[0], cocoEval.stats[1], info
+                # TODO: since pycocotools can't process dict in py36, write data to json file.
+                if self.testdev:
+                    json.dump(data_dict, open("./yolox_testdev_2017.json", "w"))
+                    cocoDt = cocoGt.loadRes("./yolox_testdev_2017.json")
+                else:
+                    _, tmp = tempfile.mkstemp()
+                    json.dump(data_dict, open(tmp, "w"))
+                    logger.info(f"Loading predictions from temp file...")
+                    cocoDt = cocoGt.loadRes(tmp)
+
+                try:
+                    from yolox.layers import COCOeval_opt as COCOeval
+                except ImportError:
+                    from pycocotools.cocoeval import COCOeval
+                    logger.warning("Use standard COCOeval.")
+
+                logger.info(f"Running COCO evaluation...")
+                cocoEval = COCOeval(cocoGt, cocoDt, annType[1])
+                cocoEval.evaluate()
+                cocoEval.accumulate()
+
+                logger.info(f"Generating summary...")
+                redirect_string = io.StringIO()
+                with contextlib.redirect_stdout(redirect_string):
+                    cocoEval.summarize()
+                summary_output = redirect_string.getvalue()
+                logger.info(f"Summary output: {summary_output[:200] if summary_output else 'EMPTY'}")
+                info += summary_output
+
+                # Check if evaluation completed successfully
+                if not hasattr(cocoEval, 'stats') or cocoEval.stats is None:
+                    raise RuntimeError("COCO evaluation did not produce stats (cocoEval.accumulate() may have failed)")
+
+                logger.info(f"Getting category names...")
+                cat_ids = list(cocoGt.cats.keys())
+                cat_names = [cocoGt.cats[catId]['name'] for catId in sorted(cat_ids)]
+
+                # Only add per-class tables if eval dict exists
+                if self.per_class_AP and cocoEval.eval is not None:
+                    try:
+                        logger.info(f"Creating per-class AP table...")
+                        AP_table = per_class_AP_table(cocoEval, class_names=cat_names)
+                        info += "per class AP:\n" + AP_table + "\n"
+                    except Exception as e:
+                        logger.warning(f"Failed to create per-class AP table: {e}")
+
+                if self.per_class_AR and cocoEval.eval is not None:
+                    try:
+                        logger.info(f"Creating per-class AR table...")
+                        AR_table = per_class_AR_table(cocoEval, class_names=cat_names)
+                        info += "per class AR:\n" + AR_table + "\n"
+                    except Exception as e:
+                        logger.warning(f"Failed to create per-class AR table: {e}")
+
+                logger.info(f"COCO evaluation completed successfully!")
+                return cocoEval.stats[0], cocoEval.stats[1], info
+            except Exception as e:
+                import traceback
+                logger.warning(f"COCO evaluation failed (model may be producing invalid predictions): {e}")
+                logger.warning(f"Traceback: {traceback.format_exc()}")
+                info += f"\nCOCO evaluation failed: {e}\n"
+                return 0, 0, info
         else:
+            logger.warning("No valid predictions to evaluate")
+            info += "\nNo valid predictions\n"
             return 0, 0, info
