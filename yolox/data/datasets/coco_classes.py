@@ -83,4 +83,5 @@ COCO_CLASSES = (
     "teddy bear",
     "hair drier",
     "toothbrush",
+    "trashcan",
 )
