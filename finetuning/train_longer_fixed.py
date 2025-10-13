@@ -71,14 +71,14 @@ def train():
     img_tensor = torch.from_numpy(img_resized).unsqueeze(0).float()
 
     # Get annotations for this image
-    anns = [
-        ann for ann in coco_data["annotations"] if ann["image_id"] == img_info["id"]
+    annotations = [
+        annotation for annotation in coco_data["annotations"] if annotation["image_id"] == img_info["id"]
     ]
 
     # Convert to YOLOX format: [class_id, x_center, y_center, width, height]
     targets = []
-    for ann in anns:
-        x, y, w_box, h_box = ann["bbox"]
+    for annotation in annotations:
+        x, y, w_box, h_box = annotation["bbox"]
 
         # FIXED: Apply the same ratio transformation as the image
         # The image is resized by ratio and placed at top-left
@@ -91,7 +91,7 @@ def train():
         x_center = x_scaled + w_scaled / 2
         y_center = y_scaled + h_scaled / 2
 
-        targets.append([ann["category_id"], x_center, y_center, w_scaled, h_scaled])
+        targets.append([annotation["category_id"], x_center, y_center, w_scaled, h_scaled])
 
     targets = torch.tensor(targets).unsqueeze(0) if targets else torch.zeros((1, 0, 5))
 
