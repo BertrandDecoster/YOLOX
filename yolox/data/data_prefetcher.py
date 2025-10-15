@@ -15,18 +15,9 @@ class DataPrefetcher:
 
     def __init__(self, loader):
         self.loader = iter(loader)
-        self.use_cuda = torch.cuda.is_available()
-
-        if self.use_cuda:
-            self.stream = torch.cuda.Stream()
-            self.input_transfer = self._input_cuda_for_image
-            self.record_stream = DataPrefetcher._record_stream_for_image
-            self.device = "cuda"
-        else:
-            self.stream = None
-            self.input_transfer = self._input_cpu_for_image
-            self.record_stream = DataPrefetcher._record_stream_for_cpu
-            self.device = "cpu"
+        self.stream = torch.cuda.Stream()
+        self.input_cuda = self._input_cuda_for_image
+        self.record_stream = DataPrefetcher._record_stream_for_image
         self.preload()
 
     def preload(self):
@@ -37,23 +28,17 @@ class DataPrefetcher:
             self.next_target = None
             return
 
-        if self.use_cuda:
-            with torch.cuda.stream(self.stream):
-                self.input_transfer()
-                self.next_target = self.next_target.cuda(non_blocking=True)
-        else:
-            # CPU mode: no transfer needed
-            self.input_transfer()
-            # Target stays on CPU
+        with torch.cuda.stream(self.stream):
+            self.input_cuda()
+            self.next_target = self.next_target.cuda(non_blocking=True)
 
     def next(self):
-        if self.use_cuda:
-            torch.cuda.current_stream().wait_stream(self.stream)
+        torch.cuda.current_stream().wait_stream(self.stream)
         input = self.next_input
         target = self.next_target
         if input is not None:
             self.record_stream(input)
-        if target is not None and self.use_cuda:
+        if target is not None:
             target.record_stream(torch.cuda.current_stream())
         self.preload()
         return input, target
@@ -61,15 +46,6 @@ class DataPrefetcher:
     def _input_cuda_for_image(self):
         self.next_input = self.next_input.cuda(non_blocking=True)
 
-    def _input_cpu_for_image(self):
-        # CPU mode: data is already on CPU, no transfer needed
-        pass
-
     @staticmethod
     def _record_stream_for_image(input):
         input.record_stream(torch.cuda.current_stream())
-
-    @staticmethod
-    def _record_stream_for_cpu(input):
-        # CPU mode: no stream recording needed
-        pass

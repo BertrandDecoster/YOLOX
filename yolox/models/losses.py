@@ -27,13 +27,13 @@ class IOUloss(nn.Module):
         area_p = torch.prod(pred[:, 2:], 1)
         area_g = torch.prod(target[:, 2:], 1)
 
-        en = (tl < br).type_as(tl).prod(dim=1)
+        en = (tl < br).type(tl.type()).prod(dim=1)
         area_i = torch.prod(br - tl, 1) * en
         area_u = area_p + area_g - area_i
         iou = (area_i) / (area_u + 1e-16)
 
         if self.loss_type == "iou":
-            loss = 1 - iou ** 2
+            loss = 1 - iou**2
         elif self.loss_type == "giou":
             c_tl = torch.min(
                 (pred[:, :2] - pred[:, 2:] / 2), (target[:, :2] - target[:, 2:] / 2)

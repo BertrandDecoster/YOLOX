@@ -4,9 +4,9 @@
 import datetime
 import os
 import time
-from loguru import logger
 
 import torch
+from loguru import logger
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 
@@ -30,7 +30,7 @@ from yolox.utils import (
     occupy_mem,
     save_checkpoint,
     setup_logger,
-    synchronize
+    synchronize,
 )
 
 
@@ -43,18 +43,12 @@ class Trainer:
 
         # training related attr
         self.max_epoch = exp.max_epoch
-        # MPS doesn't support mixed precision training well, so only use FP16 on CUDA
-        self.amp_training = args.fp16 and torch.cuda.is_available()
-        self.scaler = torch.cuda.amp.GradScaler(enabled=self.amp_training)
+        self.amp_training = args.fp16
+        self.scaler = torch.cuda.amp.GradScaler(enabled=args.fp16)
         self.is_distributed = get_world_size() > 1
         self.rank = get_rank()
         self.local_rank = get_local_rank()
-        # Device detection: CUDA > CPU (MPS disabled)
-        if torch.cuda.is_available():
-            self.device = "cuda:{}".format(self.local_rank)
-        else:
-            self.device = "cpu"
-            logger.info("Using CPU for training")
+        self.device = "cuda:{}".format(self.local_rank)
         self.use_model_ema = exp.ema
         self.save_history_ckpt = exp.save_history_ckpt
 
@@ -109,20 +103,15 @@ class Trainer:
         inps, targets = self.exp.preprocess(inps, targets, self.input_size)
         data_end_time = time.time()
 
-        # Only use autocast for CUDA with FP16, MPS doesn't support it well
         with torch.cuda.amp.autocast(enabled=self.amp_training):
             outputs = self.model(inps, targets)
 
         loss = outputs["total_loss"]
 
         self.optimizer.zero_grad()
-        if self.amp_training:
-            self.scaler.scale(loss).backward()
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-        else:
-            loss.backward()
-            self.optimizer.step()
+        self.scaler.scale(loss).backward()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
 
         if self.use_model_ema:
             self.ema_model.update(self.model)
@@ -144,9 +133,7 @@ class Trainer:
         logger.info("exp value:\n{}".format(self.exp))
 
         # model related init
-        # Only set CUDA device if using CUDA (not for MPS or CPU)
-        if torch.cuda.is_available() and self.device.startswith("cuda"):
-            torch.cuda.set_device(self.local_rank)
+        torch.cuda.set_device(self.local_rank)
         model = self.exp.get_model()
         logger.info(
             "Model Summary: {}".format(get_model_info(model, self.exp.test_size))
@@ -175,7 +162,7 @@ class Trainer:
         self.lr_scheduler = self.exp.get_lr_scheduler(
             self.exp.basic_lr_per_img * self.args.batch_size, self.max_iter
         )
-        if self.args.occupy and torch.cuda.is_available():
+        if self.args.occupy:
             occupy_mem(self.local_rank)
 
         if self.is_distributed:
@@ -193,25 +180,29 @@ class Trainer:
         # Tensorboard and Wandb loggers
         if self.rank == 0:
             if self.args.logger == "tensorboard":
-                self.tblogger = SummaryWriter(os.path.join(self.file_name, "tensorboard"))
+                self.tblogger = SummaryWriter(
+                    os.path.join(self.file_name, "tensorboard")
+                )
             elif self.args.logger == "wandb":
                 self.wandb_logger = WandbLogger.initialize_wandb_logger(
-                    self.args,
-                    self.exp,
-                    self.evaluator.dataloader.dataset
+                    self.args, self.exp, self.evaluator.dataloader.dataset
                 )
             elif self.args.logger == "mlflow":
                 self.mlflow_logger = MlflowLogger()
                 self.mlflow_logger.setup(args=self.args, exp=self.exp)
             else:
-                raise ValueError("logger must be either 'tensorboard', 'mlflow' or 'wandb'")
+                raise ValueError(
+                    "logger must be either 'tensorboard', 'mlflow' or 'wandb'"
+                )
 
         logger.info("Training start...")
         logger.info("\n{}".format(model))
 
     def after_train(self):
         logger.info(
-            "Training of experiment is done and the best AP is {:.2f}".format(self.best_ap * 100)
+            "Training of experiment is done and the best AP is {:.2f}".format(
+                self.best_ap * 100
+            )
         )
         if self.rank == 0:
             if self.args.logger == "wandb":
@@ -220,12 +211,13 @@ class Trainer:
                 metadata = {
                     "epoch": self.epoch + 1,
                     "input_size": self.input_size,
-                    'start_ckpt': self.args.ckpt,
-                    'exp_file': self.args.exp_file,
-                    "best_ap": float(self.best_ap)
+                    "start_ckpt": self.args.ckpt,
+                    "exp_file": self.args.exp_file,
+                    "best_ap": float(self.best_ap),
                 }
-                self.mlflow_logger.on_train_end(self.args, file_name=self.file_name,
-                                                metadata=metadata)
+                self.mlflow_logger.on_train_end(
+                    self.args, file_name=self.file_name, metadata=metadata
+                )
 
     def before_epoch(self):
         logger.info("---> start train epoch{}".format(self.epoch + 1))
@@ -278,7 +270,9 @@ class Trainer:
                 ["{}: {:.3f}s".format(k, v.avg) for k, v in time_meter.items()]
             )
 
-            mem_str = "gpu mem: {:.0f}Mb, mem: {:.1f}Gb".format(gpu_mem_usage(), mem_usage())
+            mem_str = "gpu mem: {:.0f}Mb, mem: {:.1f}Gb".format(
+                gpu_mem_usage(), mem_usage()
+            )
 
             logger.info(
                 "{}, {}, {}, {}, lr: {:.3e}".format(
@@ -294,20 +288,20 @@ class Trainer:
             if self.rank == 0:
                 if self.args.logger == "tensorboard":
                     self.tblogger.add_scalar(
-                        "train/lr", self.meter["lr"].latest, self.progress_in_iter)
+                        "train/lr", self.meter["lr"].latest, self.progress_in_iter
+                    )
                     for k, v in loss_meter.items():
                         self.tblogger.add_scalar(
-                            f"train/{k}", v.latest, self.progress_in_iter)
+                            f"train/{k}", v.latest, self.progress_in_iter
+                        )
                 if self.args.logger == "wandb":
                     metrics = {"train/" + k: v.latest for k, v in loss_meter.items()}
-                    metrics.update({
-                        "train/lr": self.meter["lr"].latest
-                    })
+                    metrics.update({"train/lr": self.meter["lr"].latest})
                     self.wandb_logger.log_metrics(metrics, step=self.progress_in_iter)
-                if self.args.logger == 'mlflow':
+                if self.args.logger == "mlflow":
                     logs = {"train/" + k: v.latest for k, v in loss_meter.items()}
                     logs.update({"train/lr": self.meter["lr"].latest})
-                    self.mlflow_logger.on_log(self.args, self.exp, self.epoch+1, logs)
+                    self.mlflow_logger.on_log(self.args, self.exp, self.epoch + 1, logs)
 
             self.meter.clear_meters()
 
@@ -377,11 +371,13 @@ class Trainer:
                 self.tblogger.add_scalar("val/COCOAP50", ap50, self.epoch + 1)
                 self.tblogger.add_scalar("val/COCOAP50_95", ap50_95, self.epoch + 1)
             if self.args.logger == "wandb":
-                self.wandb_logger.log_metrics({
-                    "val/COCOAP50": ap50,
-                    "val/COCOAP50_95": ap50_95,
-                    "train/epoch": self.epoch + 1,
-                })
+                self.wandb_logger.log_metrics(
+                    {
+                        "val/COCOAP50": ap50,
+                        "val/COCOAP50_95": ap50_95,
+                        "train/epoch": self.epoch + 1,
+                    }
+                )
                 self.wandb_logger.log_images(predictions)
             if self.args.logger == "mlflow":
                 logs = {
@@ -390,7 +386,7 @@ class Trainer:
                     "val/best_ap": round(self.best_ap, 3),
                     "train/epoch": self.epoch + 1,
                 }
-                self.mlflow_logger.on_log(self.args, self.exp, self.epoch+1, logs)
+                self.mlflow_logger.on_log(self.args, self.exp, self.epoch + 1, logs)
             logger.info("\n" + summary)
         synchronize()
 
@@ -400,14 +396,20 @@ class Trainer:
 
         if self.args.logger == "mlflow":
             metadata = {
-                    "epoch": self.epoch + 1,
-                    "input_size": self.input_size,
-                    'start_ckpt': self.args.ckpt,
-                    'exp_file': self.args.exp_file,
-                    "best_ap": float(self.best_ap)
-                }
-            self.mlflow_logger.save_checkpoints(self.args, self.exp, self.file_name, self.epoch,
-                                                metadata, update_best_ckpt)
+                "epoch": self.epoch + 1,
+                "input_size": self.input_size,
+                "start_ckpt": self.args.ckpt,
+                "exp_file": self.args.exp_file,
+                "best_ap": float(self.best_ap),
+            }
+            self.mlflow_logger.save_checkpoints(
+                self.args,
+                self.exp,
+                self.file_name,
+                self.epoch,
+                metadata,
+                update_best_ckpt,
+            )
 
     def save_ckpt(self, ckpt_name, update_best_ckpt=False, ap=None):
         if self.rank == 0:
@@ -436,6 +438,6 @@ class Trainer:
                         "epoch": self.epoch + 1,
                         "optimizer": self.optimizer.state_dict(),
                         "best_ap": self.best_ap,
-                        "curr_ap": ap
-                    }
+                        "curr_ap": ap,
+                    },
                 )

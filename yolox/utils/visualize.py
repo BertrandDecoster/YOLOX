@@ -16,8 +16,8 @@ def vis(
     conf=0.5,
     class_names=None,
     x_delta=0,
-    y_delta=-00,
-    fontScale=1,
+    y_delta=-0,
+    fontScale=0.4,
 ):
 
     for i in range(len(boxes)):
