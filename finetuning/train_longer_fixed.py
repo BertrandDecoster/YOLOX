@@ -21,7 +21,7 @@ import os
 
 # Configuration
 img_size = (416, 416)
-max_epochs = 1000
+max_epochs = 300
 learning_rate = 0.001
 device = "cpu"  # Force CPU for Mac compatibility
 
@@ -72,7 +72,9 @@ def train():
 
     # Get annotations for this image
     annotations = [
-        annotation for annotation in coco_data["annotations"] if annotation["image_id"] == img_info["id"]
+        annotation
+        for annotation in coco_data["annotations"]
+        if annotation["image_id"] == img_info["id"]
     ]
 
     # Convert to YOLOX format: [class_id, x_center, y_center, width, height]
@@ -91,7 +93,9 @@ def train():
         x_center = x_scaled + w_scaled / 2
         y_center = y_scaled + h_scaled / 2
 
-        targets.append([annotation["category_id"], x_center, y_center, w_scaled, h_scaled])
+        targets.append(
+            [annotation["category_id"], x_center, y_center, w_scaled, h_scaled]
+        )
 
     targets = torch.tensor(targets).unsqueeze(0) if targets else torch.zeros((1, 0, 5))
 
