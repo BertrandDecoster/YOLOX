@@ -23,11 +23,11 @@ class Exp(MyExp):
         self.val_ann = "instances_val2017.json"
 
         # Training configuration for overfitting test on CPU
-        self.max_epoch = 10  # Stop after X epochs
+        self.max_epoch = 100  # 100 epochs to ensure overfitting
         self.data_num_workers = (
             0  # IMPORTANT: Set to 0 for CPU/Mac to avoid multiprocessing issues
         )
-        self.eval_interval = 1  # Evaluate every epoch to track overfitting
+        self.eval_interval = 10  # Evaluate every 10 epochs
 
         # Small batch size for CPU overfitting test
         self.batch_size = 2  # Very small batch size for CPU
@@ -37,11 +37,11 @@ class Exp(MyExp):
         self.test_size = (640, 640)
 
         # Training hyperparameters optimized for overfitting
-        self.basic_lr_per_img = 0.01 / 64.0  # Higher learning rate
+        self.basic_lr_per_img = 0.01 / 64.0 * 10  # 10x higher learning rate for faster convergence
         self.scheduler = "yoloxwarmcos"  # YOLOX scheduler
         self.no_aug_epochs = 100  # Disable augmentation for entire training (set high so it's always disabled)
         self.warmup_epochs = 1  # Minimal warmup
-        self.min_lr_ratio = 1.0  # Keep LR constant (no decay)
+        self.min_lr_ratio = 0.05  # Allow LR decay to 5% of initial
 
         # Disable augmentations for overfitting test
         self.mosaic_prob = 0.0  # No mosaic
