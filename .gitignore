@@ -226,6 +226,9 @@ events.out.tfevents*
 .Trashes
 ehthumbs.db
 Thumbs.db
-datasets_raw/README.md
+
+# Vision
 /datasets_raw
 /datasets
+/viz
+/weights

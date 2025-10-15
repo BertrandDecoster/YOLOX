@@ -21,7 +21,7 @@ import os
 
 # Configuration
 img_size = (416, 416)
-max_epochs = 300
+max_epochs = 200
 learning_rate = 0.001
 device = "cpu"  # Force CPU for Mac compatibility
 
@@ -170,7 +170,7 @@ def train():
         "epoch": max_epochs,
         "loss": final_loss,
     }
-    save_path = "fixed_overfit_model2.pth"
+    save_path = "weights/overfit_single_picture.pth"
     torch.save(checkpoint, save_path)
     logger.info(f"Model saved to {save_path}")
 
