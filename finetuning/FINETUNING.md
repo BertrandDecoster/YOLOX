@@ -1,6 +1,285 @@
-# Comprehensive YOLOX Finetuning Guide for New Object Classes
+# YOLOX Finetuning Guide
 
-## 1. Data Gathering Strategy
+Complete guide for finetuning YOLOX models on custom datasets, from quick start to production deployment.
+
+## Table of Contents
+- [Quick Start](#quick-start)
+- [Overfitting Test](#overfitting-test)
+- [Available Tools](#available-tools)
+- [Complete Finetuning Workflow](#complete-finetuning-workflow)
+
+---
+
+## Quick Start
+
+### Prerequisites
+```bash
+# Install YOLOX in development mode
+pip3 install -v -e .
+```
+
+### Verify Training Pipeline (Recommended First Step)
+Before training on a full dataset, verify your setup works by overfitting on a single image:
+
+```bash
+# 1. Run overfitting test (200 epochs on single image)
+cd finetuning
+python overfit_single_picture.py
+
+# 2. Visualize predictions
+python viz_model_predictions.py --path ../datasets/trashcan_test/train2017/ --conf 0.05
+```
+
+Expected result: Model should achieve >90% loss reduction and detect objects in the training image.
+
+### Training on Custom Dataset
+Once overfitting test passes, proceed with full dataset training using the main YOLOX training pipeline (see [Complete Finetuning Workflow](#complete-finetuning-workflow) below).
+
+---
+
+## Overfitting Test
+
+### Purpose
+Verify that your training pipeline is working correctly before investing time in full dataset preparation:
+1. Data pipeline correctly loads images and annotations
+2. Model can learn from your data format
+3. Loss functions are working properly
+4. Training loop functions correctly
+
+### Setup
+
+#### 1. Prepare Small Test Dataset
+Use 1-5 images for the overfitting test:
+
+```bash
+# Add test images
+mkdir -p datasets/test_dataset/train2017
+mkdir -p datasets/test_dataset/annotations
+cp your_test_images/*.jpg datasets/test_dataset/train2017/
+```
+
+#### 2. Create COCO Format Annotations
+Create `datasets/test_dataset/annotations/instances_train2017.json`:
+
+```json
+{
+    "images": [
+        {
+            "id": 1,
+            "file_name": "image1.jpg",
+            "height": 480,
+            "width": 640
+        }
+    ],
+    "annotations": [
+        {
+            "id": 1,
+            "image_id": 1,
+            "category_id": 1,
+            "bbox": [100, 100, 200, 200],
+            "area": 40000,
+            "iscrowd": 0
+        }
+    ],
+    "categories": [
+        {
+            "id": 1,
+            "name": "your_object",
+            "supercategory": "object"
+        }
+    ]
+}
+```
+
+**Note:** If you have YOLO format annotations, use `coco_formatter.py` to convert them.
+
+#### 3. Update Training Script
+Edit `overfit_single_picture.py` to point to your dataset:
+
+```python
+# Line 58-59: Update dataset paths
+with open("datasets/test_dataset/annotations/instances_train2017.json", "r") as f:
+    coco_data = json.load(f)
+
+# Line 63: Update image directory
+img_path = os.path.join("datasets/test_dataset/train2017", img_info["file_name"])
+```
+
+### Running the Test
+
+```bash
+cd finetuning
+python overfit_single_picture.py
+```
+
+### Expected Results
+
+**During Training (console output):**
+- Initial loss: ~10-50
+- Final loss: <1.0
+- Loss reduction: >90%
+- Individual losses (iou_loss, conf_loss, cls_loss) all decrease
+
+**After Training:**
+Model checkpoint saved to `weights/overfit_single_picture.pth`
+
+**Verification:**
+```bash
+# Visualize predictions on training image
+python viz_model_predictions.py \
+    --path datasets/test_dataset/train2017/ \
+    --ckpt weights/overfit_single_picture.pth \
+    --conf 0.05
+```
+
+Check `viz/` directory for output images with bounding boxes. The model should detect all labeled objects with high confidence.
+
+### Troubleshooting
+
+**High Loss / No Learning:**
+- Verify bbox coordinates are within image bounds
+- Check that images load correctly
+- Ensure category_id matches your class definitions
+- Verify annotations use correct COCO format (x, y, width, height from top-left)
+
+**Memory Issues:**
+- Script uses CPU by default for Mac compatibility
+- For GPU training, modify `device = "cpu"` to `device = "cuda"`
+- Reduce image size in config: `img_size = (320, 320)`
+
+**No Detections:**
+- Lower confidence threshold: `--conf 0.01`
+- Verify model loaded checkpoint correctly
+- Check that bbox coordinates were transformed correctly during preprocessing
+
+---
+
+## Available Tools
+
+### 1. overfit_single_picture.py
+**Purpose:** Train YOLOX-Tiny on a single image to verify training pipeline
+
+**Features:**
+- Trains for 200 epochs on first image in dataset
+- CPU-compatible (Mac development)
+- Correctly handles coordinate transformations during preprocessing
+- Saves checkpoint to `weights/overfit_single_picture.pth`
+
+**Usage:**
+```bash
+python overfit_single_picture.py
+```
+
+**Key Parameters (edit in script):**
+- `img_size`: Input size (default: 416x416)
+- `max_epochs`: Training epochs (default: 200)
+- `learning_rate`: Learning rate (default: 0.001)
+- `device`: "cpu" or "cuda"
+
+### 2. viz_model_predictions.py
+**Purpose:** Visualize model predictions with bounding boxes on images
+
+**Features:**
+- Loads trained model checkpoint
+- Runs inference on images or directories
+- Draws bounding boxes with class labels
+- Saves annotated images
+- Provides detection statistics by class
+
+**Usage:**
+```bash
+python viz_model_predictions.py --path <image_or_dir> --ckpt <checkpoint.pth> --conf 0.05
+
+# Examples:
+python viz_model_predictions.py --path ../datasets/test/train2017/ --conf 0.05
+python viz_model_predictions.py --path image.jpg --ckpt weights/custom.pth --conf 0.25
+```
+
+**Arguments:**
+- `--path`: Path to image file or directory
+- `--ckpt`: Model checkpoint file (default: weights/overfit_single_picture.pth)
+- `--conf`: Confidence threshold (default: 0.05)
+- `--nms`: NMS threshold (default: 0.3)
+- `--tsize`: Test image size (default: 416)
+- `--output_dir`: Output directory for results (default: ./viz)
+- `--display`: Show images with cv2.imshow (requires display)
+
+**Output:**
+- Annotated images saved to `viz/` directory
+- Console logs with detection counts by class
+- Summary statistics across all processed images
+
+### 3. coco_formatter.py
+**Purpose:** Convert YOLO format annotations to COCO format
+
+**Features:**
+- Reads YOLO .txt annotations (normalized coordinates)
+- Converts to COCO JSON format
+- Handles both train and validation splits
+- Automatically calculates bbox areas
+
+**Usage:**
+1. Edit paths in script:
+```python
+class_file = "datasets/your_dataset/classes.txt"
+yolo_dir = "datasets/your_dataset/train2017"
+image_dir = "datasets/your_dataset/train2017"
+output_file = "datasets/your_dataset/annotations/instances_train2017.json"
+```
+
+2. Run:
+```bash
+python coco_formatter.py
+```
+
+**YOLO Format (input):**
+```
+# classes.txt
+bicycle
+car
+trash_can
+
+# frame_0000.txt (class_id x_center y_center width height, all normalized 0-1)
+0 0.5 0.5 0.3 0.4
+1 0.2 0.3 0.1 0.15
+```
+
+**COCO Format (output):**
+```json
+{
+  "images": [{"id": 0, "file_name": "frame_0000.jpg", "width": 640, "height": 480}],
+  "annotations": [{"id": 1, "image_id": 0, "category_id": 0, "bbox": [x, y, w, h], "area": 0, "iscrowd": 0}],
+  "categories": [{"id": 0, "name": "bicycle"}]
+}
+```
+
+### 4. viz_compare_coco_yolo.py
+**Purpose:** Compare YOLO and COCO ground truth annotations visually
+
+**Features:**
+- Loads both YOLO .txt and COCO .json annotations
+- Visualizes bounding boxes from each format
+- Helps verify format conversion accuracy
+- Saves separate images for comparison
+
+**Usage:**
+1. Edit paths in script to point to your dataset
+2. Run:
+```bash
+python viz_compare_coco_yolo.py
+```
+
+**Output:**
+- `ground_truth_yolo.jpg`: Red bounding boxes from YOLO format
+- `ground_truth_coco.jpg`: Blue bounding boxes from COCO format
+
+Use this to verify that `coco_formatter.py` converted annotations correctly.
+
+---
+
+## Complete Finetuning Workflow
+
+### 1. Data Gathering Strategy
 
 **Quality over quantity principle**: Start with 500-1000 high-quality images per new class minimum. More diverse data leads to better generalization.
 
@@ -16,7 +295,7 @@
 - **Negative samples**: Include images without your target object to reduce false positives.
 - **Class balance**: If adding to existing classes, maintain reasonable balance (no more than 10:1 ratio).
 
-## 2. Data Labeling Process
+### 2. Data Labeling Process
 
 **Annotation tools selection**:
 - **LabelImg**: Simple, fast for small datasets, exports YOLO format directly.
@@ -34,18 +313,18 @@
 **COCO format structure** (YOLOX native):
 ```json
 {
-  "images": [{id, file_name, height, width}],
-  "annotations": [{id, image_id, category_id, bbox[x,y,w,h], area, iscrowd}],
-  "categories": [{id, name, supercategory}]
+  "images": [{"id": 1, "file_name": "img.jpg", "height": 480, "width": 640}],
+  "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [x, y, w, h], "area": 0, "iscrowd": 0}],
+  "categories": [{"id": 1, "name": "object_name", "supercategory": "category"}]
 }
 ```
 
 **Conversion from other formats**:
-- YOLO format: bbox center coordinates → top-left coordinates
-- Pascal VOC: XML parsing → JSON structure
-- Custom formats: Write converters maintaining spatial accuracy
+- **YOLO format**: Use `coco_formatter.py` utility (bbox center coordinates → top-left coordinates)
+- **Pascal VOC**: XML parsing → JSON structure
+- **Custom formats**: Write converters maintaining spatial accuracy
 
-## 3. Dataset Preparation and Structure
+### 3. Dataset Preparation and Structure
 
 **Directory organization**:
 ```
@@ -79,7 +358,7 @@ datasets/
 - **Additional augmentations**: Consider domain-specific augmentations (weather, blur, noise).
 - **Augmentation probability tuning**: Start with defaults, adjust based on validation performance.
 
-## 4. Model Configuration for New Classes
+### 4. Model Configuration for New Classes
 
 **Choosing base model architecture**:
 - **YOLOX-Nano**: Mobile/edge deployment, <1M parameters.
@@ -108,7 +387,7 @@ datasets/
 - **Partial loading**: Load compatible layers when class numbers differ.
 - **Domain-specific pretrained**: Use if available (e.g., medical, aerial imagery).
 
-## 5. Training Configuration and Hyperparameters
+### 5. Training Configuration and Hyperparameters
 
 **Key hyperparameters for finetuning**:
 
@@ -141,7 +420,7 @@ datasets/
 - **Label smoothing**: 0.0-0.1 to prevent overconfidence.
 - **Gradient clipping**: Prevent explosion in early training.
 
-## 6. Training Process and Monitoring
+### 6. Training Process and Monitoring
 
 **Pre-training checklist**:
 - Verify dataset paths and annotation loading.
@@ -149,6 +428,28 @@ datasets/
 - Confirm GPU availability and memory requirements.
 - Set up experiment tracking (tensorboard/wandb/mlflow).
 - Create backup of original model weights.
+
+**Training command** (using main YOLOX pipeline):
+```bash
+# Train with pretrained weights
+python -m yolox.tools.train \
+    -f exps/example/custom/yolox_s_custom.py \
+    -d 8 \
+    -b 64 \
+    --fp16 \
+    -o \
+    --cache \
+    -c /path/to/yolox_s.pth
+
+# Common flags:
+# -f: path to experiment file
+# -d: number of GPUs
+# -b: total batch size (recommended: num_gpu * 8)
+# --fp16: enable mixed precision training
+# -o, --occupy: occupy GPU memory first
+# --cache: cache images to RAM for faster training
+# -c: checkpoint file for fine-tuning
+```
 
 **Training monitoring metrics**:
 - **Loss components**: Track cls_loss, reg_loss, obj_loss separately.
@@ -177,7 +478,30 @@ datasets/
 - Keep last K checkpoints for rollback.
 - Save optimizer state for resuming.
 
-## 7. Evaluation and Validation Strategies
+### 7. Evaluation and Validation Strategies
+
+**Evaluation command**:
+```bash
+# Evaluate model
+python -m yolox.tools.eval \
+    -n yolox-s \
+    -c /path/to/best_ckpt.pth \
+    -b 64 \
+    -d 8 \
+    --conf 0.001 \
+    --fp16 \
+    --fuse
+
+# Speed test (single batch, single GPU)
+python -m yolox.tools.eval \
+    -n yolox-s \
+    -c /path/to/best_ckpt.pth \
+    -b 1 \
+    -d 1 \
+    --conf 0.001 \
+    --fp16 \
+    --fuse
+```
 
 **Comprehensive evaluation metrics**:
 - **Detection metrics**: Precision, Recall, F1-score at various IoU thresholds.
@@ -197,6 +521,31 @@ datasets/
 - **Memory profiling**: Peak memory usage during inference.
 - **Edge case handling**: Empty images, extreme sizes, corrupted inputs.
 
+**Demo/Inference**:
+```bash
+# Image inference
+python tools/demo.py image \
+    -n yolox-s \
+    -c /path/to/yolox_s.pth \
+    --path assets/dog.jpg \
+    --conf 0.25 \
+    --nms 0.45 \
+    --tsize 640 \
+    --save_result \
+    --device gpu
+
+# Video inference
+python tools/demo.py video \
+    -n yolox-s \
+    -c /path/to/yolox_s.pth \
+    --path /path/to/video.mp4 \
+    --conf 0.25 \
+    --nms 0.45 \
+    --tsize 640 \
+    --save_result \
+    --device gpu
+```
+
 **A/B testing preparation**:
 - **Baseline comparison**: Original model vs finetuned on same test set.
 - **Statistical significance**: Ensure improvements are not random variation.
@@ -209,12 +558,31 @@ datasets/
 - **Data drift detection**: Monitor input distribution changes.
 - **Retraining triggers**: Define when to update model (quarterly, performance-based).
 
+### 8. Model Export and Deployment
+
+**Export to ONNX**:
+```bash
+python tools/export_onnx.py \
+    -n yolox-s \
+    -c /path/to/yolox_s.pth \
+    --output-name yolox_s.onnx
+```
+
+**Export to TorchScript**:
+```bash
+python tools/export_torchscript.py \
+    -n yolox-s \
+    -c /path/to/yolox_s.pth
+```
+
 **Final deployment checklist**:
 - Model passes all accuracy thresholds.
 - Inference speed meets requirements.
 - Model size fits deployment constraints.
 - Robustness testing completed.
 - Documentation and versioning in place.
+
+---
 
 ## Summary and Key Success Factors
 

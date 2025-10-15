@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 """
-Fixed YOLOX training script for finetuning on single image
+YOLOX training script for finetuning on single image
 Correctly handles coordinate transformation during preprocessing
 """
 
@@ -21,7 +21,7 @@ import os
 
 # Configuration
 img_size = (416, 416)
-max_epochs = 200
+max_epochs = 500
 learning_rate = 0.001
 device = "cpu"  # Force CPU for Mac compatibility
 

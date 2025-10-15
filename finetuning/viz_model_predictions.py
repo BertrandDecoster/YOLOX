@@ -39,8 +39,8 @@ def make_parser():
     parser.add_argument(
         "-c",
         "--ckpt",
-        # default="weights/overfit_single_picture.pth",
-        default="weights/yolox_tiny.pth",
+        default="weights/overfit_single_picture.pth",
+        # default="weights/yolox_tiny.pth",
         type=str,
         help="checkpoint file",
     )
@@ -290,7 +290,7 @@ def main():
     total_by_class = {}
 
     for img_name, results in all_results.items():
-        logger.info(f"\n{img_name}:")
+        logger.info(f"{img_name}:")
         logger.info(f"  Total detections: {results['total']}")
         if results["by_class"]:
             for class_name, count in results["by_class"].items():
